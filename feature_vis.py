@@ -6,6 +6,7 @@ from keras import backend as K
 from scipy.misc import imsave
 from scipy.ndimage import filters
 
+
 # util function to convert a tensor into a valid image
 def deprocess_image(x):
     # normalize tensor: center on 0., ensure std is 0.1
@@ -53,7 +54,7 @@ def smoothing(im, mode = 'None'):
         return im
 
 
-def save_image(kept_filters, keras_model):
+def save_image(kept_filters, keras_model, name = None):
     # kept_filters: list of inputs that give the highest response from each node
     # keras_model: trained model that we are visualizing
 
@@ -95,11 +96,11 @@ def save_image(kept_filters, keras_model):
             for k in range(nk):
                 # slice the 3D input into 2.5D (one slice from each plane)
                 if k == 0:
-                    im = img[30,:,:,:]
+                    im = np.transpose(img[30,:,:,:],(1,0,2))
                 elif k == 1:
-                    im = img[:,30,:,:]
+                    im = np.transpose(img[:,30,:,:],(1,0,2))
                 elif k == 2:
-                    im = img[:,:,30,:]
+                    im = np.transpose(img[:,:,30,:],(1,0,2))
                 else:
                     print('Undefined scenario!')
 
@@ -107,13 +108,53 @@ def save_image(kept_filters, keras_model):
                                  (img_width + margin) * (i*nk + k): (img_width + margin) * (i*nk + k) + img_width,:] = im
 
     # save the result to disk
-    imsave('stitched_filters_%dx%d.png' % (nj,ni*nk), stitched_filters)
-    print('file name is: ','stitched_filters_%dx%d.png' % (nj,ni*nk))
+    if name is None:
+        imsave('stitched_filters_%dx%d.png' % (nj,ni*nk), stitched_filters)
+        print('file name is: ','stitched_filters_%dx%d.png' % (nj,ni*nk))
+    else:
+        name += '.png'
+        imsave(name, stitched_filters)
+        print('file name is: ',name)
+
+
+
+# save the original image to disk
+def save_or(img,name = None):
+    # img: image to be saved to disk
+
+    # Define some initial parameters
+    margin = 5
+    width = 3 * 61 + (3 - 1) * margin
+    height = 61 + (1 - 1) * margin
+    stitched_im = -20*np.ones((height,width, 3)) # clim is [-127,127]
+
+    # Iterate through the directions of the cube
+    for k in range(3):
+        # slice the 3D input into 2.5D (one slice from each plane)
+        if k == 0:
+            im = np.transpose(img[0,30,:,:,:],(1,0,2))
+        elif k == 1:
+            im = np.transpose(img[0,:,30,:,:],(1,0,2))
+        elif k == 2:
+            im = np.transpose(img[0,:,:,30,:],(1,0,2))
+        else:
+            print('Undefined scenario!')
+        stitched_im[0:61,(61 + margin) * k: (61 + margin) * k + 61,:] = im
+
+    # save the result to disk
+    if name is None:
+        imsave('Original_im.png', stitched_im)
+        print('file name is: ','Original_im.png')
+    else:
+        name += '.png'
+        imsave(name, stitched_im)
+        print('file name is: ',name)
 
 
 
 
-def features(model,layer_name,iterations = 50,smoothing_par = 'GaussianBlur', inp_im = None):
+def features(model,layer_name,iterations = 50,smoothing_par = 'GaussianBlur',
+             inp_im = None, name = None):
     # model: model to visualize
     # layer_name: name of the layer we want to visualize features of
     # smoothing: smoothing function
@@ -122,7 +163,7 @@ def features(model,layer_name,iterations = 50,smoothing_par = 'GaussianBlur', in
     model.summary()
 
     # dimensions of the generated pictures for each filter.
-    input_shape = keras_model.input_shape
+    input_shape = model.input_shape
     img_width = input_shape[1]
     img_height = input_shape[2]
     img_depth = input_shape[3]
@@ -138,7 +179,7 @@ def features(model,layer_name,iterations = 50,smoothing_par = 'GaussianBlur', in
 
     # Iterate through the filters to find the optimal inputs
     kept_filters = []
-    loss_list = np.empty((0,2), dtype = np.float32)
+    loss_list = np.empty((0,3), dtype = np.float32)
     for filter_index in range(num_filts):
         # Print a message to the user and start a timer
         print('Processing filter %d' % filter_index)
@@ -162,10 +203,10 @@ def features(model,layer_name,iterations = 50,smoothing_par = 'GaussianBlur', in
         step = 0.9
 
         # Make a random start-point for the optimization if the user hasn`t define one
-        if inp_im == None:
+        if inp_im is None:
             # we start from a gray image with some random noise
             input_img_data = np.random.random((1, img_width, img_height, img_depth, 1))
-            input_img_data = (input_img_data - 0.5) * 40
+            input_img_data = (input_img_data - 0.5) * 25    # clim is [-127 127]
         else:
             input_img_data = inp_im
 
@@ -182,8 +223,11 @@ def features(model,layer_name,iterations = 50,smoothing_par = 'GaussianBlur', in
             if i % (iterations//5) == 0:
                 print('Loss value at iteration %d:' %i, loss_value)
 
+                if i == 0:
+                    init_loss = loss_value
+
         # decode the resulting input image and append it to the lists
-        loss_list = np.append(loss_list,[[loss_value, filter_index]],axis = 0)
+        loss_list = np.append(loss_list,[[loss_value, filter_index, init_loss]],axis = 0)
         if loss_value > 0:
             img = deprocess_image(input_img_data[0])
             kept_filters.append((img, loss_value))
@@ -191,7 +235,7 @@ def features(model,layer_name,iterations = 50,smoothing_par = 'GaussianBlur', in
         print('Filter %d processed in %ds' % (filter_index, end_time - start_time))
 
     # Make the mosaic and save it as an image
-    save_image(kept_filters, model)
+    save_image(kept_filters, model, name)
 
     # Sort the list of filter losses so the user knows which filters were best
     sort_idx = loss_list.argsort(axis = 0)
@@ -199,7 +243,6 @@ def features(model,layer_name,iterations = 50,smoothing_par = 'GaussianBlur', in
 
 
     return kept_filters, loss_list[sort_idx[::-1]]
-
 
 
 
