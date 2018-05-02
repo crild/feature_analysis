@@ -254,4 +254,4 @@ layer_name = 'attribute_layer'
                              iterations = 500,
                              smoothing_par = 'GaussianBlur',
                              inp_im = None,
-                             name = None)
+                             name = 'images/test_im')
